@@ -217,7 +217,8 @@ exports.dialogflowFirebaseFulfillment = functions.https.onRequest((request: any,
 });
 
 function sendMail(to: string, from: string, subject: string, text: string, html: string) {
-    sgMail.setApiKey("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");
+    //Uncomment below code after getting your api key from https://sendgrid.com/pricing/
+    //sgMail.setApiKey(apiKey);
     const msg = {
         to: to,
         from: from,
