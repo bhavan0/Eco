@@ -3,8 +3,9 @@
 const functions = require('firebase-functions');
 const { WebhookClient } = require('dialogflow-fulfillment');
 const { Card, Suggestion } = require('dialogflow-fulfillment');
-const { List, Permission, BasicCard, Button } = require('actions-on-google');
+const { List, Permission, BasicCard, Button, Table } = require('actions-on-google');
 const request = require('request');
+const sgMail = require('@sendgrid/mail');
 
 process.env.DEBUG = 'dialogflow:debug'; // enables lib debugging statements
 
@@ -12,7 +13,7 @@ exports.dialogflowFirebaseFulfillment = functions.https.onRequest((request: any,
     const agent = new WebhookClient({ request, response });
 
     function backendStatus(agent: any) {
-        agent.add(`Backend is up`);
+        agent.add(`The Backend is up`);
     }
 
     function userId(agent: any) {
@@ -23,36 +24,134 @@ exports.dialogflowFirebaseFulfillment = functions.https.onRequest((request: any,
 
     function listOrders(agent: any) {
         const conv = agent.conv();
-        conv.ask('Please click on the order you want to replace');
-        // Create a list
-        conv.ask(new List({
-            title: 'Orders List',
-            items: {
-                // Add the first item to the list
-                '006-7950-668517': {
-                    title: '006-7950-668517'
-                },
-                // Add the second item to the list
-                '006-8742-668523': {
-                    title: '006-8742-668523'
-                },
-                // Add the third item to the list
-                '006-1234-654321': {
-                    title: '006-1234-654321'
-                },
-            },
-        }));
-        agent.add(conv);
+        return getRecentOrders(conv.request.user.userId)
+            .then((data) => {
+                var parsedObject = JSON.parse(JSON.stringify(data));
+
+                conv.ask('Please click on the order you want to reorder');
+                // Create a list
+                let items: any = {};
+                for (var i = 0; i < parsedObject.length; i++) {
+                    items[parsedObject[i].orderCode] = {
+                        title: parsedObject[i].orderCode,
+                        description: 'Placed On: ' + parsedObject[i].placedOn
+                    }
+                }
+
+                conv.ask(new List({
+                    title: 'Orders List',
+                    items: items
+                }));
+                agent.add(conv);
+            });
     }
 
-    function placeOrder(agent: any) {
-        agent.add(agent.parameters['Order_ID']);
+    function listFavoriteOrders(agent: any) {
+        const conv = agent.conv();
+
+        return getFavoriteOrders(conv.request.user.userId)
+            .then((data) => {
+                var parsedObject = JSON.parse(JSON.stringify(data));
+
+                conv.ask('Please click on the Favorite order you want to replace');
+
+                // Create a list
+                let items: any = {};
+                for (var i = 0; i < parsedObject.length; i++) {
+                    items[parsedObject[i].name] = {
+                        title: parsedObject[i].name
+                    }
+                }
+
+                conv.ask(new List({
+                    title: 'Favorite Orders List',
+                    items: items
+                }));
+                agent.add(conv);
+            });
+    }
+
+    function SampleDetails(agent: any) {
+        const conv = agent.conv();
+        return getSampleDetails(agent.parameters['Order_ID'])
+            .then((data) => {
+                var parsedObject = JSON.parse(JSON.stringify(data));
+
+                let rows = [];
+                for (var i = 0; i < parsedObject.length; i++) {
+                    rows.push([parsedObject[i].sampleCode, parsedObject[i].sampleStatus, parsedObject[i].conformity])
+                }
+
+                conv.ask('Sample Details');
+                conv.ask(new Table({
+                    dividers: true,
+                    columns: ['Sample Code', 'Sample Status', 'Conformity'],
+                    rows: rows,
+                }))
+                agent.add(conv);
+            });
     }
 
     function actionsIntentOPTION(agent: any) {
         let conv = agent.conv();
-        let response = 'You have selected ' + conv.arguments.parsed.input.OPTION;
-        agent.add(response);
+        if (conv.request.conversation.conversationToken === '["order"]') {
+            return createOrder(conv.request.user.userId, conv.arguments.parsed.input.OPTION)
+                .then((data) => {
+                    conv.ask("The order has been placed with order id " + data);
+
+                    // getUserInfo(conv.request.user.userId)
+                    //     .then((data) => {
+                    //         sendMail('bhavan.reddy1997@gmail.com',
+                    //             'bhavan.reddy1997@gmail.com',
+                    //             'Order Has been Created',
+                    //             'Order Has been Created',
+                    //             'Order Has been Created');
+
+                    //         conv.ask(`Mail has been sent to your registered Mail Id, Please Check`);
+                    //         agent.add(conv);
+                    //     });
+                    agent.add(conv);
+                });
+        }
+        else {
+            return createFavoriteOrder(conv.request.user.userId, conv.arguments.parsed.input.OPTION)
+                .then((data) => {
+                    conv.ask("The order has been placed with order id " + data);
+
+                    // getUserInfo(conv.request.user.userId)
+                    //     .then((data) => {
+                    //         agent.add('Favorite Order Has been placed');
+                    //         sendMail('bhavan.reddy1997@gmail.com',
+                    //             'bhavan.reddy1997@gmail.com',
+                    //             'Favorite Order Has been Created',
+                    //             'Favorite Order Has been Created',
+                    //             'Favorite Order Has been Created');
+
+                    //         conv.ask(`Mail has been sent to your registered Mail Id, Please Check`);
+                    //     });
+
+                    agent.add(conv);
+
+                });
+        }
+    }
+
+    function placeOrder(agent: any) {
+        let conv = agent.conv();
+        agent.add(conv);
+        return createOrder(conv.request.user.userId, agent.parameters['Order_ID'])
+            .then((data) => {
+                conv.ask("The order has been placed with order id " + data);
+
+                // getUserInfo(conv.request.user.userId)
+                //     .then((data) => {
+                //         sendMail('bhavan.reddy1997@gmail.com', 'bhavan.reddy1997@gmail.com', 'Order Has been Created', 'Order Has been Created', 'Order Has been Created');
+                //         conv.ask(`Mail has been sent to your registered Mail Id, Please Check`);
+                //         agent.add(conv);
+                //     });
+
+                agent.add(conv);
+            });
     }
 
     function dropDownLocation(agent: any) {
@@ -67,22 +166,32 @@ exports.dialogflowFirebaseFulfillment = functions.https.onRequest((request: any,
 
     function dropDownLocationReply(agent: any) {
         const conv = agent.conv();
-        // const latitude = conv.device.location.coordinates.latitude;
-        // const longitude = conv.device.location.coordinates.longitude;
+        const latitude = conv.device.location.coordinates.latitude;
+        const longitude = conv.device.location.coordinates.longitude;
 
-        const mapUrl1 = "https://www.google.com/maps/search/?api=1&query=" + 12.971599 + "," + 77.594566;
+        return getDropOffLocation(latitude, longitude)
+            .then((data) => {
+                var parsedObject = JSON.parse(JSON.stringify(data));
+                conv.ask('Nearest DropOff Location');
+                const mapUrl = "https://www.google.com/maps/search/?api=1&query=" + parsedObject[0].latitude + "," + parsedObject[0].longitude;
 
-        conv.ask("This is the map for the nearest dropoff location");
-        conv.ask(new BasicCard({
-            title: "Direction",
-            text: "Directions for the nearest dropoff location",
-            buttons: new Button({
-                url: mapUrl1,
-                title: 'Directions'
-            }),
-            display: "DEFAULT"
-        }))
-        agent.add(conv);
+                conv.ask(new BasicCard({
+                    title: parsedObject[0].labName,
+                    text: "Open From : " + parsedObject[0].accessTimeGeneralFrom + " To : " + parsedObject[0].accessTimeGeneralTo,
+                    buttons: new Button({
+                        url: mapUrl,
+                        title: 'Map'
+                    }),
+                    display: "DEFAULT"
+                }));
+                agent.add(conv);
+            });
+
+    }
+
+    function testMail(agent: any) {
+        sendMail('bhavan.reddy1997@gmail.com', 'bhavan.reddy1997@gmail.com', 'Test Mail', 'Testing mail', 'Test Mail');
+        agent.add(`Mail has been sent registered Mail Id`);
     }
 
     function testApi(agent: any) {
@@ -100,17 +209,106 @@ exports.dialogflowFirebaseFulfillment = functions.https.onRequest((request: any,
     intentMap.set('actions.intent.OPTION', actionsIntentOPTION);
     intentMap.set('DropDown Location', dropDownLocation);
     intentMap.set('DropDown Location Reply', dropDownLocationReply);
+    intentMap.set('List Favorite Orders', listFavoriteOrders);
+    intentMap.set('Test Email', testMail);
     intentMap.set('Test Api', testApi);
+    intentMap.set('Sample Details', SampleDetails);
     agent.handleRequest(intentMap);
 });
 
-function callApi() {
+function sendMail(to: string, from: string, subject: string, text: string, html: string) {
+    sgMail.setApiKey("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");
+    const msg = {
+        to: to,
+        from: from,
+        subject: subject,
+        text: text,
+        html: html
+    };
+    sgMail.send(msg);
+}
+
+function getUserInfo(userId: string) {
     var options = {
-        url: 'https://jsonplaceholder.typicode.com/posts/1',
+        url: 'https://eoleco.azurewebsites.net/api/user/ga?gaId=' + userId,
         headers: {
             'User-Agent': 'request'
         }
     };
+    return returnApiPromise(options);
+}
+
+function callApi() {
+    var options = {
+        url: 'https://eoleco.azurewebsites.net/api/orders',
+        headers: {
+            'User-Agent': 'request'
+        }
+    };
+    return returnApiPromise(options);
+}
+
+function getDropOffLocation(latitude: any, longitude: any) {
+    var options = {
+        url: 'https://eoleco.azurewebsites.net/api/drop-off-locations?lat=' + latitude + '&log=' + longitude,
+        headers: {
+            'User-Agent': 'request'
+        }
+    };
+    return returnApiPromise(options);
+}
+
+function getRecentOrders(userId: string) {
+    var options = {
+        url: 'https://eoleco.azurewebsites.net/api/orders/recent?gaId=' + userId,
+        headers: {
+            'User-Agent': 'request'
+        }
+    };
+    return returnApiPromise(options);
+}
+
+function getFavoriteOrders(userId: string) {
+    var options = {
+        url: 'https://eoleco.azurewebsites.net/api/orders/favorite-orders?gaId=' + userId,
+        headers: {
+            'User-Agent': 'request'
+        }
+    };
+    return returnApiPromise(options);
+}
+
+function createOrder(userId: string, orderId: string) {
+    var options = {
+        url: 'https://eoleco.azurewebsites.net/api/orders/from-order?gaId=' + userId + '&orderId=' + orderId,
+        headers: {
+            'User-Agent': 'request'
+        }
+    };
+    return returnStringApi(options);
+}
+
+function createFavoriteOrder(userId: string, orderId: string) {
+    var options = {
+        url: 'https://eoleco.azurewebsites.net/api/orders/from-favorite?gaId=' + userId + '&orderId=' + orderId,
+        headers: {
+            'User-Agent': 'request'
+        }
+    };
+    return returnStringApi(options);
+}
+
+function getSampleDetails(userId: string) {
+    var options = {
+        url: 'https://eoleco.azurewebsites.net/api/orders/samples?orderCode=' + userId,
+        headers: {
+            'User-Agent': 'request'
+        }
+    };
+    return returnApiPromise(options);
+}
+
+function returnApiPromise(options: any) {
     // Return new promise 
     return new Promise(function (resolve, reject) {
         // Do async job
@@ -119,6 +317,20 @@ function callApi() {
                 reject(err);
             } else {
                 resolve(JSON.parse(body));
+            }
+        });
+    });
+}
+
+function returnStringApi(options: any) {
+    // Return new promise 
+    return new Promise(function (resolve, reject) {
+        // Do async job
+        request.get(options, function (err: any, resp: any, body: any) {
+            if (err) {
+                reject(err);
+            } else {
+                resolve(body);
             }
         });
     });
