@@ -71,7 +71,7 @@ exports.dialogflowFirebaseFulfillment = functions.https.onRequest((request: any,
             });
     }
 
-    function SampleDetails(agent: any) {
+    function sampleDetails(agent: any) {
         const conv = agent.conv();
         return getSampleDetails(agent.parameters['Order_ID'])
             .then((data) => {
@@ -189,6 +189,34 @@ exports.dialogflowFirebaseFulfillment = functions.https.onRequest((request: any,
 
     }
 
+    function checkUserExists(agent: any) {
+        const conv = agent.conv();
+        return getUserStatus(agent.parameters['UserId'])
+            .then((data) => {
+                if (JSON.stringify(data) === 'true') {
+                    conv.ask('User Exists in our system');
+                }
+                else {
+                    conv.ask('User Does Not Exists in our system');
+                }
+                agent.add(conv);
+            });
+    }
+
+    function checkIfGuidExists(agent: any) {
+        const conv = agent.conv();
+        return getGUIDStatus(conv.request.user.userId)
+            .then((data) => {
+                if (JSON.stringify(data) === 'true') {
+                    conv.ask('Your Google assistant Id has been registered, You can place orders!!');
+                }
+                else {
+                    conv.ask('Your Google assistant Id has not been registered, Please contact Support to register and continue');
+                }
+                agent.add(conv);
+            });
+    }
+
     function testMail(agent: any) {
         sendMail('bhavan.reddy1997@gmail.com', 'bhavan.reddy1997@gmail.com', 'Test Mail', 'Testing mail', 'Test Mail');
         agent.add(`Mail has been sent registered Mail Id`);
@@ -212,7 +240,9 @@ exports.dialogflowFirebaseFulfillment = functions.https.onRequest((request: any,
     intentMap.set('List Favorite Orders', listFavoriteOrders);
     intentMap.set('Test Email', testMail);
     intentMap.set('Test Api', testApi);
-    intentMap.set('Sample Details', SampleDetails);
+    intentMap.set('Sample Details', sampleDetails);
+    intentMap.set('Check User Exists', checkUserExists);
+    intentMap.set('Check If GUID exists', checkIfGuidExists);
     agent.handleRequest(intentMap);
 });
 
@@ -298,9 +328,29 @@ function createFavoriteOrder(userId: string, orderId: string) {
     return returnStringApi(options);
 }
 
-function getSampleDetails(userId: string) {
+function getSampleDetails(orderCode: string) {
     var options = {
-        url: 'https://eoleco.azurewebsites.net/api/orders/samples?orderCode=' + userId,
+        url: 'https://eoleco.azurewebsites.net/api/orders/samples?orderCode=' + orderCode,
+        headers: {
+            'User-Agent': 'request'
+        }
+    };
+    return returnApiPromise(options);
+}
+
+function getUserStatus(userId: string) {
+    var options = {
+        url: 'https://eoleco.azurewebsites.net/api/user/verify?userId=' + userId,
+        headers: {
+            'User-Agent': 'request'
+        }
+    };
+    return returnApiPromise(options);
+}
+
+function getGUIDStatus(userId: string) {
+    var options = {
+        url: 'https://eoleco.azurewebsites.net/api/user/verify-ga-user?gaId=' + userId,
         headers: {
             'User-Agent': 'request'
         }
